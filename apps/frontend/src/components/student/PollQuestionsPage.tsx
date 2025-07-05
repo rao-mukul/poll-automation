@@ -1,8 +1,6 @@
 "use client";
 
-import type React from "react";
-
-import { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Users,
@@ -23,15 +21,7 @@ import {
 } from "lucide-react";
 import GlassCard from "../GlassCard";
 import { useCopyProtection } from "../../hooks/useCopyProtection";
-import io from "socket.io-client";
-
-interface DataChangeEvent {
-  type: "insert" | "update" | "delete" | "replace";
-  collection: string;
-  id?: string;
-  data?: any;
-  timestamp: string;
-}
+import io, { Socket } from "socket.io-client";
 
 interface BackendQuestion {
   _id: string;
@@ -46,17 +36,6 @@ interface BackendQuestion {
   created_at: string;
 }
 
-interface Question {
-  id: string;
-  question: string;
-  options: string[];
-  timeLimit: number;
-  points: number;
-  difficulty: "Easy" | "Medium" | "Hard";
-  category: string;
-  correctAnswer: number;
-}
-
 interface PollQuestionsPageProps {
   roomCode: string;
   onComplete?: () => void;
@@ -69,216 +48,33 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
   useCopyProtection(true);
 
   // Real-time connection state
-  const [socket, setSocket] = useState<any>(null);
+  const [socket, setSocket] = useState<Socket | null>(null);
   const [connected, setConnected] = useState(false);
-  const [backendQuestions, setBackendQuestions] = useState<BackendQuestion[]>(
-    []
-  );
-  const [recentChanges, setRecentChanges] = useState<DataChangeEvent[]>([]);
+  const [recentChanges, setRecentChanges] = useState<any[]>([]);
   const [toasts, setToasts] = useState<
     Array<{ id: string; message: string; type: "success" | "info" | "warning" }>
   >([]);
   const [lastActivity, setLastActivity] = useState<Date>(new Date());
 
-  // Transform backend questions to frontend format
-  const transformBackendQuestions = (
-    backendQuestions: BackendQuestion[]
-  ): Question[] => {
-    const activeQuestions = backendQuestions.filter(
-      (q) => q.is_active && q.is_approved
-    );
-
-    return activeQuestions.map((backendQ) => {
-      // Find the correct answer index
-      const correctAnswerIndex = backendQ.options.findIndex(
-        (option) => option === backendQ.correct_answer
-      );
-
-      // Map difficulty to frontend format
-      const difficulty = (backendQ.difficulty.charAt(0).toUpperCase() +
-        backendQ.difficulty.slice(1)) as "Easy" | "Medium" | "Hard";
-
-      // Calculate points based on difficulty
-      const difficultyPoints = {
-        Easy: 100,
-        Medium: 150,
-        Hard: 200,
-      };
-
-      // Calculate time limit based on difficulty
-      const difficultyTimeLimit = {
-        Easy: 30,
-        Medium: 25,
-        Hard: 35,
-      };
-
-      return {
-        id: backendQ._id,
-        question: backendQ.question,
-        options: backendQ.options,
-        timeLimit: difficultyTimeLimit[difficulty],
-        points: difficultyPoints[difficulty],
-        difficulty: difficulty,
-        category: backendQ.concept || "General",
-        correctAnswer: correctAnswerIndex >= 0 ? correctAnswerIndex : 0,
-      };
-    });
-  };
-
-  // Fallback questions for when backend questions aren't available
-  const fallbackQuestions: Question[] = [
-    {
-      id: "fallback-1",
-      question: "Loading questions from backend...",
-      options: [
-        "Please wait",
-        "Connecting to server",
-        "Loading data",
-        "Almost ready",
-      ],
-      timeLimit: 30,
-      points: 100,
-      difficulty: "Easy",
-      category: "System",
-      correctAnswer: 0,
-    },
-  ];
-
-  // Get questions from backend or use fallback
-  const questions =
-    backendQuestions.length > 0
-      ? transformBackendQuestions(backendQuestions)
-      : fallbackQuestions;
-
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
+  // Current question state
+  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
-  const [timeLeft, setTimeLeft] = useState(30); // Default time, will be updated when questions load
+  const [timeLeft, setTimeLeft] = useState(30);
   const [isAnswered, setIsAnswered] = useState(false);
-  const [score, setScore] = useState(0);
   const [showResult, setShowResult] = useState(false);
+  const [score, setScore] = useState(0);
   const [streak, setStreak] = useState(0);
   const [totalParticipants] = useState(47);
   const [answeredCount, setAnsweredCount] = useState(0);
+  const [questionIndex, setQuestionIndex] = useState(0);
+  const [connectionStatus, setConnectionStatus] = useState("Connecting...");
 
-  const currentQuestion = questions[currentQuestionIndex];
-  const isLastQuestion = currentQuestionIndex === questions.length - 1;
-  const progress = ((currentQuestionIndex + 1) / questions.length) * 100;
-
-  // Update timer when questions change or current question changes
-  useEffect(() => {
-    if (currentQuestion && !isAnswered) {
-      setTimeLeft(currentQuestion.timeLimit);
-    }
-  }, [currentQuestion, isAnswered]);
-
-  // Reset poll when backend questions change
-  useEffect(() => {
-    if (backendQuestions.length > 0) {
-      setCurrentQuestionIndex(0);
-      setSelectedAnswer(null);
-      setIsAnswered(false);
-      setShowResult(false);
-      setScore(0);
-      setStreak(0);
-      setAnsweredCount(0);
-
-      // Set initial timer for first question
-      const transformedQuestions = transformBackendQuestions(backendQuestions);
-      if (transformedQuestions.length > 0) {
-        setTimeLeft(transformedQuestions[0].timeLimit);
-      }
-    }
-  }, [backendQuestions]);
-
-  // --- useEffect: timer logic ---
-  useEffect(() => {
-    if (timeLeft > 0 && !isAnswered) {
-      const timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-      return () => clearTimeout(timer);
-    } else if (timeLeft === 0 && !isAnswered) {
-      handleTimeUp();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [timeLeft, isAnswered]);
-
-  // --- handleTimeUp ---
-  const handleTimeUp = () => {
-    setIsAnswered(true);
-    setShowResult(true);
-    setStreak(0); // Reset streak on timeout
-    setTimeout(() => {
-      nextQuestion();
-    }, 3000);
-  };
-
-  // --- handleAnswerSelect ---
-  const handleAnswerSelect = (answerIndex: number) => {
-    if (isAnswered) return;
-
-    setSelectedAnswer(answerIndex);
-    setIsAnswered(true);
-    setShowResult(true);
-    setAnsweredCount(Math.floor(Math.random() * totalParticipants) + 20); // Simulate other participants
-
-    const isCorrect = answerIndex === currentQuestion.correctAnswer;
-    if (isCorrect) {
-      const timeBonus = Math.floor((timeLeft / currentQuestion.timeLimit) * 50);
-      const totalPoints = currentQuestion.points + timeBonus;
-      setScore(score + totalPoints);
-      setStreak(streak + 1);
-    } else {
-      setStreak(0);
-    }
-
-    setTimeout(() => {
-      nextQuestion();
-    }, 3000);
-  };
-
-  // --- nextQuestion ---
-  const nextQuestion = () => {
-    if (isLastQuestion) {
-      onComplete?.();
-      return;
-    }
-
-    const nextIndex = currentQuestionIndex + 1;
-    setCurrentQuestionIndex(nextIndex);
-    setSelectedAnswer(null);
-    setIsAnswered(false);
-    setShowResult(false);
-    setTimeLeft(questions[nextIndex]?.timeLimit || 30);
-    setAnsweredCount(0);
-  };
-
-  // --- getDifficultyColor ---
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case "Easy":
-        return "from-green-500 to-emerald-500";
-      case "Medium":
-        return "from-yellow-500 to-orange-500";
-      case "Hard":
-        return "from-red-500 to-pink-500";
-      default:
-        return "from-gray-500 to-gray-600";
-    }
-  };
-
-  // --- getTimerColor ---
-  const getTimerColor = () => {
-    if (timeLeft <= 5) return "text-red-400 animate-pulse";
-    if (timeLeft <= 10) return "text-yellow-400";
-    return "text-green-400";
-  };
-
-  // --- Real-time helper functions ---
+  // Show toast notifications
   const showToast = useCallback(
     (message: string, type: "success" | "info" | "warning") => {
       const id = Date.now().toString();
       setToasts((prev) => [...prev, { id, message, type }]);
 
-      // Auto-remove toast after 3 seconds
       setTimeout(() => {
         setToasts((prev) => prev.filter((toast) => toast.id !== id));
       }, 3000);
@@ -286,6 +82,7 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
     []
   );
 
+  // Play notification sound
   const playNotificationSound = useCallback(() => {
     try {
       const audioContext = new (window.AudioContext ||
@@ -312,217 +109,208 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
     }
   }, []);
 
-  const addRecentChange = useCallback((change: DataChangeEvent) => {
-    setRecentChanges((prev) => {
-      const newChanges = [change, ...prev.slice(0, 4)]; // Keep last 5 changes
-      return newChanges;
-    });
+  // Add recent change to history
+  const addRecentChange = useCallback((change: any) => {
+    setRecentChanges((prev) => [change, ...prev.slice(0, 4)]);
   }, []);
 
-  // --- Real-time Socket.IO connection ---
+  // Get difficulty color
+  const getDifficultyColor = (difficulty: string) => {
+    switch (difficulty) {
+      case "Easy":
+        return "from-green-500 to-emerald-500";
+      case "Medium":
+        return "from-yellow-500 to-orange-500";
+      case "Hard":
+        return "from-red-500 to-pink-500";
+      default:
+        return "from-gray-500 to-gray-600";
+    }
+  };
+
+  // Get timer color based on time left
+  const getTimerColor = () => {
+    if (timeLeft <= 5) return "text-red-400 animate-pulse";
+    if (timeLeft <= 10) return "text-yellow-400";
+    return "text-green-400";
+  };
+
+  // Handle time running out
+  const handleTimeUp = () => {
+    setIsAnswered(true);
+    setShowResult(true);
+    setStreak(0);
+    setAnsweredCount(totalParticipants);
+    
+    setTimeout(() => {
+      resetQuestion();
+    }, 3000);
+  };
+
+  // Handle answer selection
+  const handleAnswerSelect = (answerIndex: number) => {
+    if (isAnswered || !currentQuestion) return;
+
+    setSelectedAnswer(answerIndex);
+    setIsAnswered(true);
+    setShowResult(true);
+    setAnsweredCount(Math.floor(Math.random() * 20) + totalParticipants - 20);
+
+    const selected = currentQuestion.options[answerIndex];
+    const isCorrect = selected === currentQuestion.correct_answer;
+    
+    if (isCorrect) {
+      const timeBonus = Math.floor((timeLeft / currentQuestion.timeLimit) * 50);
+      const totalPoints = currentQuestion.points + timeBonus;
+      setScore(score + totalPoints);
+      setStreak(streak + 1);
+    } else {
+      setStreak(0);
+    }
+
+    setTimeout(() => {
+      resetQuestion();
+    }, 3000);
+  };
+
+  // Reset question state
+  const resetQuestion = () => {
+    setCurrentQuestion(null);
+    setSelectedAnswer(null);
+    setIsAnswered(false);
+    setShowResult(false);
+    setTimeLeft(0);
+    setAnsweredCount(0);
+  };
+
+  // Setup socket connection
   useEffect(() => {
-    let reconnectTimeout: NodeJS.Timeout | null = null;
-    let currentAttempts = 0;
-    let isComponentMounted = true;
+    const socketInstance = io("http://localhost:3001", {
+      transports: ["websocket", "polling"],
+      timeout: 10000,
+      forceNew: true,
+      autoConnect: true,
+    });
 
-    const connectSocket = () => {
-      if (!isComponentMounted) return;
+    setSocket(socketInstance);
 
-      try {
-        const newSocket = io("http://localhost:3001", {
-          transports: ["websocket", "polling"],
-          timeout: 10000, // Shorter timeout
-          forceNew: true,
-          autoConnect: true,
-        });
+    socketInstance.on("connect", () => {
+      console.log("✅ Connected to Socket.IO server");
+      setConnected(true);
+      setConnectionStatus("Connected");
+      setLastActivity(new Date());
+      showToast("Connected to real-time server", "success");
+      
+      // Join the room for this poll
+      socketInstance.emit("join-room", roomCode);
+      socketInstance.emit("request-initial-data");
+    });
 
-        setSocket(newSocket);
-        currentAttempts += 1;
+    socketInstance.on("connect_error", (error: any) => {
+      console.error("❌ Connection error:", error);
+      setConnected(false);
+      setConnectionStatus("Connection Failed");
+      showToast(`Connection failed: ${error.message}`, "warning");
+    });
 
-        newSocket.on("connect", () => {
-          if (!isComponentMounted) return;
-          console.log("✅ Connected to Socket.IO server");
-          setConnected(true);
-          currentAttempts = 0;
-          setLastActivity(new Date());
-          showToast("Connected to real-time server", "success");
+    socketInstance.on("disconnect", () => {
+      console.log("❌ Disconnected from Socket.IO server");
+      setConnected(false);
+      setConnectionStatus("Disconnected");
+      showToast("Disconnected from server", "warning");
+    });
 
-          // Join the room for this poll
-          newSocket.emit("join-room", roomCode);
-
-          // Request initial data when connected
-          newSocket.emit("request-initial-data");
-        });
-
-        newSocket.on("connect_error", (error: any) => {
-          if (!isComponentMounted) return;
-          console.error("❌ Connection error:", error);
-          setConnected(false);
-
-          // Only show toast for first few attempts to avoid spam
-          if (currentAttempts <= 2) {
-            showToast(
-              `Connection failed (attempt ${currentAttempts})`,
-              "warning"
-            );
-          }
-
-          // Auto-retry connection after 5 seconds (max 3 attempts)
-          if (currentAttempts < 3) {
-            reconnectTimeout = setTimeout(() => {
-              if (isComponentMounted) {
-                connectSocket();
-              }
-            }, 5000);
-          } else {
-            console.log(
-              "Max connection attempts reached. Real-time features disabled."
-            );
-          }
-        });
-
-        newSocket.on("disconnect", () => {
-          if (!isComponentMounted) return;
-          console.log("❌ Disconnected from Socket.IO server");
-          setConnected(false);
-          showToast("Disconnected from server", "warning");
-        });
-
-        // Listen for initial data
-        newSocket.on(
-          "initial-data",
-          (data: { questions: BackendQuestion[]; timestamp: string }) => {
-            console.log("📥 Initial data received:", data);
-            setBackendQuestions(data.questions);
-            setLastActivity(new Date());
-            showToast(`Loaded ${data.questions.length} questions`, "info");
-          }
-        );
-
-        // Listen for real-time question changes
-        newSocket.on("question-added", (change: DataChangeEvent) => {
-          console.log("📥 New question added:", change);
-          setBackendQuestions((prev) => [change.data, ...prev]);
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast(`New question added`, "success");
-          playNotificationSound();
-        });
-
-        newSocket.on("question-updated", (change: DataChangeEvent) => {
-          console.log("📥 Question updated:", change);
-          setBackendQuestions((prev) =>
-            prev.map((q) => (q._id === change.id ? change.data : q))
-          );
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast("Question updated", "info");
-        });
-
-        newSocket.on("question-deleted", (change: DataChangeEvent) => {
-          console.log("📥 Question deleted:", change);
-          setBackendQuestions((prev) =>
-            prev.filter((q) => q._id !== change.id)
-          );
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast("Question deleted", "warning");
-        });
-
-        // Listen for poll events
-        newSocket.on("poll", (questions: BackendQuestion[]) => {
-          console.log("📥 New Poll Received:", questions);
-          setLastActivity(new Date());
-          showToast(`New poll with ${questions.length} questions!`, "info");
-          playNotificationSound();
-        });
-
-        // Listen for generic data changes
-        // Listen for initial data
-        newSocket.on(
-          "initial-data",
-          (data: { questions: BackendQuestion[]; timestamp: string }) => {
-            if (!isComponentMounted) return;
-            console.log("📥 Initial data received:", data);
-            setBackendQuestions(data.questions);
-            setLastActivity(new Date());
-            showToast(`Loaded ${data.questions.length} questions`, "info");
-          }
-        );
-
-        // Listen for real-time question changes
-        newSocket.on("question-added", (change: DataChangeEvent) => {
-          if (!isComponentMounted) return;
-          console.log("📥 New question added:", change);
-          setBackendQuestions((prev) => [change.data, ...prev]);
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast(`New question added`, "success");
-          playNotificationSound();
-        });
-
-        newSocket.on("question-updated", (change: DataChangeEvent) => {
-          if (!isComponentMounted) return;
-          console.log("📥 Question updated:", change);
-          setBackendQuestions((prev) =>
-            prev.map((q) => (q._id === change.id ? change.data : q))
-          );
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast("Question updated", "info");
-        });
-
-        newSocket.on("question-deleted", (change: DataChangeEvent) => {
-          if (!isComponentMounted) return;
-          console.log("📥 Question deleted:", change);
-          setBackendQuestions((prev) =>
-            prev.filter((q) => q._id !== change.id)
-          );
-          addRecentChange(change);
-          setLastActivity(new Date());
-          showToast("Question deleted", "warning");
-        });
-
-        // Listen for poll events
-        newSocket.on("poll", (questions: BackendQuestion[]) => {
-          if (!isComponentMounted) return;
-          console.log("📥 New Poll Received:", questions);
-          setLastActivity(new Date());
-          showToast(`New poll with ${questions.length} questions!`, "info");
-          playNotificationSound();
-        });
-
-        // Listen for generic data changes
-        newSocket.on("data-changed", (change: DataChangeEvent) => {
-          if (!isComponentMounted) return;
-          console.log("📥 Data changed:", change);
-          addRecentChange(change);
-          setLastActivity(new Date());
-        });
-
-        return newSocket;
-      } catch (error) {
-        console.error("Failed to initialize socket:", error);
-        setConnected(false);
-        return null;
+    // Handle initial data
+    socketInstance.on(
+      "initial-data",
+      (data: { questions: BackendQuestion[]; timestamp: string }) => {
+        if (data.questions && data.questions.length > 0) {
+          setCurrentQuestion(transformBackendQuestion(data.questions[0]));
+          setTimeLeft(30);
+          setQuestionIndex(1);
+        }
       }
-    };
+    );
 
-    const socketInstance = connectSocket();
+    // Handle new questions
+    socketInstance.on("poll-question", (newQuestion: any) => {
+      const transformed = transformBackendQuestion(newQuestion);
+      setCurrentQuestion(transformed);
+      setTimeLeft(transformed.timeLimit);
+      setQuestionIndex(prev => prev + 1);
+      showToast("New question received", "info");
+      playNotificationSound();
+    });
 
-    // Cleanup on unmount
+    // Handle no active questions
+    socketInstance.on("no-active-question", () => {
+      setCurrentQuestion(null);
+      showToast("No active questions available", "info");
+    });
+
+    // Handle data changes
+    socketInstance.on("data-changed", (change: any) => {
+      addRecentChange(change);
+      setLastActivity(new Date());
+    });
+
     return () => {
-      isComponentMounted = false;
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
-      }
-      if (socketInstance && typeof socketInstance.close === "function") {
-        socketInstance.close();
-      }
+      socketInstance.disconnect();
     };
   }, [roomCode, showToast, playNotificationSound, addRecentChange]);
 
-  // Safety check for currentQuestion
+  // Timer logic
+  useEffect(() => {
+    if (!currentQuestion || isAnswered) return;
+
+    const timer = setInterval(() => {
+      setTimeLeft((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          handleTimeUp();
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [currentQuestion, isAnswered]);
+
+  // Transform backend question to frontend format
+  const transformBackendQuestion = (backendQ: BackendQuestion) => {
+    const correctAnswerIndex = backendQ.options.findIndex(
+      (option) => option === backendQ.correct_answer
+    );
+
+    const difficulty = (backendQ.difficulty.charAt(0).toUpperCase() +
+      backendQ.difficulty.slice(1)) as "Easy" | "Medium" | "Hard";
+
+    const difficultyPoints = {
+      Easy: 100,
+      Medium: 150,
+      Hard: 200,
+    };
+
+    const difficultyTimeLimit = {
+      Easy: 30,
+      Medium: 25,
+      Hard: 35,
+    };
+
+    return {
+      id: backendQ._id,
+      question: backendQ.question,
+      options: backendQ.options,
+      timeLimit: difficultyTimeLimit[difficulty],
+      points: difficultyPoints[difficulty],
+      difficulty: difficulty,
+      category: backendQ.concept || "General",
+      correctAnswer: correctAnswerIndex >= 0 ? correctAnswerIndex : 0,
+    };
+  };
+
+  // Fallback for no active question
   if (!currentQuestion) {
     return (
       <div className="space-y-6">
@@ -535,12 +323,12 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
             <div className="flex items-center justify-center space-x-3 mb-4">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
               <span className="text-xl text-white">
-                Loading Poll Questions...
+                Waiting for Question
               </span>
             </div>
             <p className="text-gray-400">
               {connected
-                ? "Fetching questions from server..."
+                ? "The next question will appear here automatically"
                 : "Connecting to server..."}
             </p>
           </GlassCard>
@@ -587,7 +375,6 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
           </div>
         </div>
         <h1 className="text-3xl font-bold text-white mb-2">Interactive Poll</h1>
-        {/* Show the room code here */}
         <p className="text-gray-400 truncate max-w-md mx-auto">{roomCode}</p>
       </motion.div>
 
@@ -626,58 +413,20 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
               <div className="flex items-center justify-center space-x-1 text-green-400 mb-1">
                 <Target className="w-4 h-4" />
                 <span className="text-2xl font-bold text-white">
-                  {Math.round(progress)}%
+                  Question {questionIndex}
                 </span>
               </div>
               <p className="text-xs text-gray-400">Progress</p>
             </div>
           </div>
 
-          {/* Progress Bar */}
-          <div className="mt-4">
-            <div className="w-full bg-white/10 rounded-full h-2 overflow-hidden">
-              <motion.div
-                className="bg-gradient-to-r from-primary-500 to-secondary-500 h-2 rounded-full"
-                initial={{ width: 0 }}
-                animate={{ width: `${progress}%` }}
-                transition={{ duration: 0.5 }}
-              />
-            </div>
-          </div>
-
           {/* Real-time Data Section */}
-          {connected && backendQuestions.length > 0 && (
+          {connected && (
             <div className="mt-4 pt-4 border-t border-white/10">
               <div className="flex items-center justify-between text-sm">
                 <div className="flex items-center space-x-2">
                   <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                  <span className="text-gray-400">Live Questions Pool:</span>
-                  <span className="text-green-400 font-medium">
-                    {
-                      backendQuestions.filter(
-                        (q) => q.is_active && q.is_approved
-                      ).length
-                    }
-                  </span>
-                  <button
-                    onClick={() => socket?.emit("request-initial-data")}
-                    className="ml-2 p-1 rounded-full bg-white/10 hover:bg-white/20 transition-colors"
-                    title="Refresh data"
-                  >
-                    <svg
-                      className="w-3 h-3 text-gray-400"
-                      fill="none"
-                      stroke="currentColor"
-                      viewBox="0 0 24 24"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
-                      />
-                    </svg>
-                  </button>
+                  <span className="text-gray-400">Real-time updates active</span>
                 </div>
                 <div className="text-gray-400">
                   Last update: {lastActivity.toLocaleTimeString()}
@@ -715,7 +464,7 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
       {/* Question Card */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={currentQuestionIndex}
+          key={currentQuestion.id}
           initial={{ opacity: 0, scale: 0.9, y: 20 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.9, y: -20 }}
@@ -765,7 +514,7 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
                 <div className="inline-flex items-center space-x-2 bg-gradient-to-r from-primary-500/20 to-secondary-500/20 border border-primary-500/30 rounded-full px-4 py-2 mb-4">
                   <Lightbulb className="w-4 h-4 text-primary-400" />
                   <span className="text-primary-400 font-medium">
-                    Question {currentQuestionIndex + 1} of {questions.length}
+                    Question {questionIndex}
                   </span>
                 </div>
                 <h2 className="text-2xl md:text-3xl font-bold text-white leading-tight">
@@ -775,7 +524,7 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
 
               {/* Answer Options */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                {currentQuestion.options.map((option, index) => {
+                {currentQuestion.options.map((option: string, index: number) => {
                   const isSelected = selectedAnswer === index;
                   const isCorrect =
                     showResult && index === currentQuestion.correctAnswer;
@@ -806,7 +555,6 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
                         ${isAnswered ? "cursor-not-allowed" : "cursor-pointer"}
                       `}
                     >
-                      {/* Option Background Effect */}
                       <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
 
                       <div className="relative z-10 flex items-center justify-between">
@@ -909,24 +657,6 @@ const PollQuestionsPage: React.FC<PollQuestionsPageProps> = ({
                       )}
                     </div>
                   </GlassCard>
-                </motion.div>
-              )}
-
-              {/* Next Question Button */}
-              {isLastQuestion && isAnswered && (
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  className="mt-8 text-center"
-                >
-                  <button
-                    onClick={() => onComplete?.()}
-                    className="inline-flex items-center space-x-3 px-8 py-4 bg-gradient-to-r from-primary-500 to-secondary-500 text-white font-bold text-lg rounded-2xl hover:from-primary-600 hover:to-secondary-600 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105"
-                  >
-                    <Award className="w-6 h-6" />
-                    <span>View Final Results</span>
-                    <ArrowRight className="w-5 h-5" />
-                  </button>
                 </motion.div>
               )}
             </div>
