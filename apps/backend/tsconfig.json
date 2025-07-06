@@ -1,21 +1,23 @@
 {
   "compilerOptions": {
-    "target": "es2016",
-    "module": "commonjs",
+    "target": "ES2022",
+    "lib": ["ES2022"],
     "outDir": "./dist",
-    "rootDir": "../../",
-    "jsx": "react-jsx",
-    "types": ["vite/client", "react", "react-dom"],
+    "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "baseUrl": ".",
+    "baseUrl": "./src",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true,
     "paths": {
-      "@poll-automation/types": ["../../shared/types/src/index"],
-      "@poll-automation/types/*": ["../../shared/types/src/*"]
+      "@poll-automation/types": ["../../../shared/types/src/index"],
+      "@poll-automation/types/*": ["../../../shared/types/src/*"]
     }
   },
-  "include": ["src/**/*", "../../shared/types/src/**/*"],
-  "exclude": ["node_modules"]
+  "include": ["src", "../../../shared/types/src"],
+  "exclude": ["node_modules", "dist"]
 }

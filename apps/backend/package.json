@@ -10,15 +10,15 @@
     "testEnvironment": "node"
   },
   "scripts": {
-    "build": "tsc",
-    "start": "node dist/server.js",
-    "dev": "ts-node-dev src/server.ts",
-    "dev:transcription": "nodemon src/transcription/index.ts",
-    "lint": "eslint src/**/* --fix",
-    "format": "prettier --write src/**/*",
-    "test": "jest",
-    "test:client": "ts-node test-client.ts"
-  },
+  "build": "tsc",
+  "start": "node dist/server.ts",
+  "dev": "tsx watch src/server.ts",
+  "dev:transcription": "tsx watch src/transcription/index.ts",
+  "lint": "eslint src/**/* --fix",
+  "format": "prettier --write src/**/*",
+  "test": "jest",
+  "test:client": "tsx test-client.ts"
+},
   "keywords": [],
   "author": "",
   "license": "ISC",
@@ -29,7 +29,7 @@
     "bcryptjs": "^3.0.2",
     "buffer": "^6.0.3",
     "cors": "^2.8.5",
-    "dotenv": "^16.5.0",
+    "dotenv": "^16.6.1",
     "express": "^5.1.0",
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.17.0",
@@ -37,7 +37,8 @@
     "multer": "^2.0.1",
     "nodemailer": "^7.0.4",
     "socket.io": "^4.8.1",
-    "ws": "^8.18.2"
+    "ws": "^8.18.2",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/js": "^9.29.0",
@@ -67,6 +68,7 @@
     "ts-jest": "^29.4.0",
     "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
+    "tsx": "^4.20.3",
     "typescript": "^5.8.3",
     "typescript-eslint": "^8.34.0"
   }
