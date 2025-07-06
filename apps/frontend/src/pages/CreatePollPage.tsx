@@ -65,7 +65,13 @@ const CreatePollPage = () => {
         setRoomCode(generateRoomCode());
       }
     } else {
-      setRoomCode(generateRoomCode());
+      // Check if we have room data in localStorage from previous sessions
+      const storedRoomCode = localStorage.getItem("roomCode");
+      if (storedRoomCode) {
+        setRoomCode(storedRoomCode);
+      } else {
+        setRoomCode(generateRoomCode());
+      }
     }
   }, []);
 
@@ -101,15 +107,43 @@ const CreatePollPage = () => {
     }
   };
 
-  const handleDestroyRoom = () => {
+  // Handle destroy room
+  const handleDestroyRoom = async () => {
     setIsDestroying(true);
-    setTimeout(() => {
-      setIsPollActive(false);
-      setTimeRemaining(3 * 60 * 60);
-      setRoomCode(generateRoomCode());
-      setIsDestroying(false);
-      localStorage.removeItem(POLL_STORAGE_KEY);
-    }, 1500);
+
+    try {
+      // Get room code from localStorage
+      const storedRoomCode = localStorage.getItem("roomCode");
+
+      if (storedRoomCode) {
+        console.log("Deleting poll with room code:", storedRoomCode);
+
+        const response = await axios.delete(
+          `http://localhost:3001/api/room-code/polls/${storedRoomCode}`
+        );
+
+        console.log("Poll deleted successfully:", response.data);
+      } else {
+        console.warn("No room code found in localStorage");
+      }
+    } catch (error) {
+      console.error("Error deleting poll:", error);
+    } finally {
+      // Reset UI state
+      setTimeout(() => {
+        setIsPollActive(false);
+        setTimeRemaining(3 * 60 * 60); // Reset to 3 hours
+        setRoomCode(generateRoomCode()); // Generate new code
+        setIsDestroying(false);
+        
+        // Clear all related localStorage items
+        localStorage.removeItem(POLL_STORAGE_KEY);
+        localStorage.removeItem("roomId");
+        localStorage.removeItem("roomCode");
+        
+        console.log("Room destroyed and reset");
+      }, 1500);
+    }
   };
 
   const formatTime = (seconds: number): string => {
@@ -274,16 +308,34 @@ const CreatePollPage = () => {
     setIsLoading(true);
 
     try {
+      // Get user ID from localStorage user object
+      const userString = localStorage.getItem("user");
+      let userId = "unknown_user";
+      if (userString) {
+        try {
+          const userObj = JSON.parse(userString);
+          userId = userObj.id || "unknown_user";
+        } catch (e) {
+          console.error("Failed to parse user from localStorage:", e);
+        }
+      }
+
       const response = await axios.post(
         "http://localhost:3001/api/room-code/polls",
         {
           room_code: roomCode,
           room_title: roomName,
-          user_id: "user_123456789",
+          user_id: userId,
         }
       );
 
       console.log("Poll created successfully:", response.data);
+
+      // Store the room ID in localStorage
+      localStorage.setItem("roomId", response.data._id);
+      localStorage.setItem("roomCode", roomCode);
+
+      // Set poll as active immediately after successful API call
       setIsPollActive(true);
     } catch (error) {
       console.error("Error creating poll:", error);
