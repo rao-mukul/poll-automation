@@ -12,6 +12,11 @@ import { errorHandler } from './middlewares/error.middleware';
 import path from 'path';
 import pollConfigRoutes from './web/routes/pollConfigRoutes';
 import pollRoomCodeRoutes from './web/routes/pollRoomCodeRoutes';
+import uploadRoutes from './transcription/routes/uploadRoutes';
+
+
+
+
 
 dotenv.config();
 
@@ -31,6 +36,7 @@ app.use('/questions', saveQuestionsRouter);
 app.use('/api/poll', pollConfigRoutes);
 app.use('/api/room-code', pollRoomCodeRoutes);
 app.use('/api/polls', pollRoutes);
+app.use('/api', uploadRoutes);
 
 app.get('/', (_req, res) => {
   res.send('PollGen Backend is running.');
