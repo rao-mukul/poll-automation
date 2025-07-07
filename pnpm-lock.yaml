@@ -75,6 +75,9 @@ importers:
       ws:
         specifier: ^8.18.2
         version: 8.18.2
+      xlsx:
+        specifier: ^0.18.5
+        version: 0.18.5
     devDependencies:
       '@eslint/js':
         specifier: ^9.29.0
