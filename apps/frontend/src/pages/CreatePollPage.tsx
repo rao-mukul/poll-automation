@@ -244,7 +244,7 @@ const CreatePollPage = () => {
       formData.append("file", csvFile);
       formData.append("roomCode", roomCode);
 
-      const res = await fetch("http://localhost:3001/api/upload", {
+      const res = await fetch("http://localhost:3001/api/upload/details", {
         method: "POST",
         body: formData,
       });
